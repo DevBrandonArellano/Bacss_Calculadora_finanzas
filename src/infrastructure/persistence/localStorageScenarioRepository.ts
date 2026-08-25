@@ -3,16 +3,17 @@ import type { ScenarioRepository } from '../../application/ports/scenarioReposit
 const STORAGE_PREFIX = 'calculadora-finanzas:scenario:';
 
 export class LocalStorageScenarioRepository implements ScenarioRepository {
-  save(id: string, scenario: unknown): void {
+  save(id: string, scenario: unknown): Promise<void> {
     localStorage.setItem(STORAGE_PREFIX + id, JSON.stringify(scenario));
+    return Promise.resolve();
   }
 
-  findById(id: string): unknown {
+  findById(id: string): Promise<unknown> {
     const raw = localStorage.getItem(STORAGE_PREFIX + id);
-    return raw === null ? null : (JSON.parse(raw) as unknown);
+    return Promise.resolve(raw === null ? null : (JSON.parse(raw) as unknown));
   }
 
-  findAll(): readonly unknown[] {
+  findAll(): Promise<readonly unknown[]> {
     const results: unknown[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
@@ -23,10 +24,11 @@ export class LocalStorageScenarioRepository implements ScenarioRepository {
         results.push(JSON.parse(raw) as unknown);
       }
     }
-    return results;
+    return Promise.resolve(results);
   }
 
-  remove(id: string): void {
+  remove(id: string): Promise<void> {
     localStorage.removeItem(STORAGE_PREFIX + id);
+    return Promise.resolve();
   }
 }

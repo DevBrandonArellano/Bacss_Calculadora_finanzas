@@ -1,0 +1,9 @@
+# Nada de esto interviene en el build de producción; excluirlo acelera la
+# subida y el despliegue. La verificación (tests unitarios, E2E, auditoría)
+# corre en GitHub Actions, no en Vercel.
+e2e
+docs
+coverage
+playwright-report
+test-results
+.github

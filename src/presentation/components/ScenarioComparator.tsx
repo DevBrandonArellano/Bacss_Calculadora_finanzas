@@ -1,6 +1,20 @@
+import { useEffect, useState } from 'react';
 import { useScenarioStore } from '../state/scenarioStore';
 import type { AmortizationSystemName, TermUnit } from '../state/loanStore';
 import type { MonthlyConversionMethod } from '../../domain/shared/interestRate';
+
+function persistenceStatusMessage(
+  persistenceStatus: ReturnType<typeof useScenarioStore.getState>['persistenceStatus'],
+  persistenceError: string | null,
+  syncStatus: ReturnType<typeof useScenarioStore.getState>['syncStatus'],
+): string | null {
+  if (persistenceStatus === 'saving') return 'Guardando…';
+  if (persistenceStatus === 'error') return persistenceError ?? 'Ocurrió un error al sincronizar.';
+  if (syncStatus === 'offline') {
+    return 'No se pudo sincronizar con el servidor: tus datos quedaron guardados solo en este dispositivo.';
+  }
+  return null;
+}
 
 export function ScenarioComparator() {
   const rows = useScenarioStore((state) => state.rows);
@@ -10,6 +24,21 @@ export function ScenarioComparator() {
   const removeRow = useScenarioStore((state) => state.removeRow);
   const updateRow = useScenarioStore((state) => state.updateRow);
   const compare = useScenarioStore((state) => state.compare);
+  const savedComparisons = useScenarioStore((state) => state.savedComparisons);
+  const persistenceStatus = useScenarioStore((state) => state.persistenceStatus);
+  const persistenceError = useScenarioStore((state) => state.persistenceError);
+  const syncStatus = useScenarioStore((state) => state.syncStatus);
+  const saveCurrentComparison = useScenarioStore((state) => state.saveCurrentComparison);
+  const loadSavedComparisons = useScenarioStore((state) => state.loadSavedComparisons);
+  const loadSavedComparison = useScenarioStore((state) => state.loadSavedComparison);
+  const deleteSavedComparison = useScenarioStore((state) => state.deleteSavedComparison);
+  const [newLabel, setNewLabel] = useState('');
+
+  useEffect(() => {
+    void loadSavedComparisons();
+  }, [loadSavedComparisons]);
+
+  const statusMessage = persistenceStatusMessage(persistenceStatus, persistenceError, syncStatus);
 
   return (
     <div className="flex flex-col gap-4 p-4">
@@ -25,6 +54,81 @@ export function ScenarioComparator() {
           Agregar escenario
         </button>
       </div>
+
+      <fieldset className="border rounded p-3 flex flex-col gap-2">
+        <legend className="text-sm font-semibold px-1">Comparaciones guardadas</legend>
+
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="flex flex-col gap-1 text-sm" htmlFor="saved-comparison-label">
+            Nombre de la comparación
+            <input
+              id="saved-comparison-label"
+              type="text"
+              className="border rounded px-2 py-1"
+              value={newLabel}
+              onChange={(event) => {
+                setNewLabel(event.target.value);
+              }}
+            />
+          </label>
+          <button
+            type="button"
+            className="bg-blue-600 text-white rounded px-3 py-1 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={rows.length === 0 || persistenceStatus === 'saving'}
+            onClick={() => {
+              const label = newLabel.trim() || `Comparación ${new Date().toLocaleString()}`;
+              void saveCurrentComparison(label).then(() => {
+                setNewLabel('');
+              });
+            }}
+          >
+            Guardar comparación
+          </button>
+        </div>
+
+        {statusMessage !== null && (
+          <p
+            role={persistenceStatus === 'error' || syncStatus === 'offline' ? 'alert' : 'status'}
+            className={
+              persistenceStatus === 'error' || syncStatus === 'offline'
+                ? 'text-sm text-amber-600'
+                : 'text-sm text-gray-500'
+            }
+          >
+            {statusMessage}
+          </p>
+        )}
+
+        {savedComparisons.length > 0 && (
+          <ul className="flex flex-col gap-1">
+            {savedComparisons.map((saved) => (
+              <li key={saved.id} className="flex items-center justify-between gap-2 text-sm">
+                <span>{saved.label}</span>
+                <span className="flex gap-2">
+                  <button
+                    type="button"
+                    className="text-blue-600 hover:underline"
+                    onClick={() => {
+                      loadSavedComparison(saved.id);
+                    }}
+                  >
+                    {`Cargar ${saved.label}`}
+                  </button>
+                  <button
+                    type="button"
+                    className="text-red-600 hover:underline"
+                    onClick={() => {
+                      void deleteSavedComparison(saved.id);
+                    }}
+                  >
+                    {`Eliminar ${saved.label}`}
+                  </button>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </fieldset>
 
       {rows.length === 0 && (
         <p className="text-sm text-gray-500">

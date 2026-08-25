@@ -31,13 +31,26 @@ export default tseslint.config(
     files: ['src/**/*.{ts,tsx}'],
     plugins: { 'react-hooks': reactHooks, 'react-refresh': reactRefresh, boundaries },
     settings: {
+      // Sin este resolver, boundaries no resuelve los imports de TypeScript
+      // (que van sin extensión), los clasifica como `unknown` y las políticas
+      // de capas quedan inertes: nunca reportarían una violación.
+      'import/resolver': {
+        typescript: {
+          alwaysTryTypes: true,
+          project: ['./tsconfig.app.json', './tsconfig.node.json'],
+          // El proyecto usa dos tsconfig a propósito (app y node); no es un aviso accionable.
+          noWarnOnMultipleProjects: true,
+        },
+      },
       'boundaries/elements': [
-        { type: 'composition-root', pattern: 'src/main.tsx', partialMatch: false },
         { type: 'domain', pattern: 'src/domain/**' },
         { type: 'application', pattern: 'src/application/**' },
         { type: 'infrastructure', pattern: 'src/infrastructure/**' },
         { type: 'presentation', pattern: 'src/presentation/**' },
       ],
+      // `main.tsx` es un archivo suelto, no una carpeta: se clasifica como
+      // categoría de archivo (los `elements` describen carpetas, no archivos).
+      'boundaries/files': [{ pattern: 'src/main.tsx', category: 'composition-root' }],
     },
     rules: {
       ...reactHooks.configs.recommended.rules,
@@ -48,57 +61,63 @@ export default tseslint.config(
       // pero el proyecto prohíbe "!" explícitamente. Se prioriza no-non-null-assertion.
       '@typescript-eslint/non-nullable-type-assertion-style': 'off',
 
+      // Una sola regla cubre dependencias locales y externas: `boundaries/external`
+      // quedó obsoleta en v7 en favor de `checkAllOrigins` + selector `module`.
+      // Las políticas se evalúan en orden y la última que coincide gana, así que
+      // las más específicas van al final.
       'boundaries/dependencies': [
         'error',
         {
+          checkAllOrigins: true,
           default: 'disallow',
           policies: [
-            {
-              from: [{ type: 'domain' }],
-              allow: [],
-            },
-            {
-              from: [{ type: 'application' }],
-              allow: [{ type: 'domain' }],
-            },
-            {
-              from: [{ type: 'infrastructure' }],
-              allow: [{ type: 'domain' }, { type: 'application' }],
-            },
-            {
-              from: [{ type: 'presentation' }],
-              allow: [{ type: 'domain' }, { type: 'application' }],
-            },
-            {
-              from: [{ type: 'composition-root' }],
-              allow: [
-                { type: 'domain' },
-                { type: 'application' },
-                { type: 'infrastructure' },
-                { type: 'presentation' },
-              ],
-            },
-          ],
-        },
-      ],
+            // Paquetes externos y builtins de Node: permitidos por defecto en
+            // todas las capas; domain/application se restringen más abajo.
+            { allow: { to: { module: { origin: ['external', 'core'] } } } },
 
-      // default: 'allow' — solo domain/application quedan restringidos explícitamente
-      // abajo. infrastructure/presentation/composition-root no tienen restricción de
-      // paquetes externos (ver Fase 0), y el string comodín '*' de este plugin no
-      // resuelve correctamente paquetes con scope (ej. @testing-library/react), así
-      // que se usa el 'default' de la regla en vez de listar '*' por tipo.
-      'boundaries/external': [
-        'error',
-        {
-          default: 'allow',
-          policies: [
+            // domain no tiene política local: el `default: 'disallow'` lo deja
+            // sin permiso para importar ninguna otra capa.
             {
-              from: [{ type: 'domain' }],
-              allow: ['decimal.js', 'date-fns', 'vitest'],
+              from: { element: { type: 'application' } },
+              allow: { to: { element: { type: 'domain' } } },
             },
             {
-              from: [{ type: 'application' }],
-              allow: ['decimal.js', 'date-fns', 'vitest'],
+              from: { element: { type: 'infrastructure' } },
+              allow: { to: { element: { types: { anyOf: ['domain', 'application'] } } } },
+            },
+            {
+              from: { element: { type: 'presentation' } },
+              allow: { to: { element: { types: { anyOf: ['domain', 'application'] } } } },
+            },
+            {
+              from: { file: { categories: 'composition-root' } },
+              allow: {
+                to: {
+                  element: {
+                    types: {
+                      anyOf: ['domain', 'application', 'infrastructure', 'presentation'],
+                    },
+                  },
+                },
+              },
+            },
+
+            // domain y application solo pueden usar estos paquetes externos
+            // (ver Fase 0): se les niega todo y se les vuelve a permitir la lista.
+            {
+              from: { element: { types: { anyOf: ['domain', 'application'] } } },
+              disallow: { to: { module: { origin: ['external', 'core'] } } },
+            },
+            {
+              from: { element: { types: { anyOf: ['domain', 'application'] } } },
+              allow: {
+                to: {
+                  module: {
+                    origin: ['external', 'core'],
+                    source: ['decimal.js', 'date-fns', 'vitest'],
+                  },
+                },
+              },
             },
           ],
         },

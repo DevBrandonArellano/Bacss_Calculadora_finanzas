@@ -1,10 +1,21 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { ScenarioComparator } from './ScenarioComparator';
-import { useScenarioStore } from '../state/scenarioStore';
+import { useScenarioStore, setScenarioStoreRepository } from '../state/scenarioStore';
+import type { ScenarioRepository } from '../../application/ports/scenarioRepository';
 
 function resetStore() {
   useScenarioStore.getState().reset();
+}
+
+function fakeRepository(overrides: Partial<ScenarioRepository> = {}): ScenarioRepository {
+  return {
+    save: vi.fn().mockResolvedValue(undefined),
+    findById: vi.fn().mockResolvedValue(null),
+    findAll: vi.fn().mockResolvedValue([]),
+    remove: vi.fn().mockResolvedValue(undefined),
+    ...overrides,
+  };
 }
 
 function fillScenario(label: string, principal: string, term: string) {
@@ -72,5 +83,57 @@ describe('ScenarioComparator', () => {
     fireEvent.click(screen.getByRole('button', { name: /^comparar$/i }));
 
     expect(screen.getByRole('alert')).toBeInTheDocument();
+  });
+});
+
+describe('ScenarioComparator — guardar y cargar comparaciones', () => {
+  beforeEach(() => {
+    resetStore();
+    setScenarioStoreRepository(fakeRepository());
+  });
+
+  it('el botón de guardar está deshabilitado sin escenarios', () => {
+    render(<ScenarioComparator />);
+    expect(screen.getByRole('button', { name: /guardar comparación/i })).toBeDisabled();
+  });
+
+  it('guarda la comparación actual con la etiqueta ingresada', async () => {
+    const save = vi.fn().mockResolvedValue(undefined);
+    setScenarioStoreRepository(fakeRepository({ save }));
+    render(<ScenarioComparator />);
+    fireEvent.click(screen.getByRole('button', { name: /agregar escenario/i }));
+
+    fireEvent.change(screen.getByLabelText(/nombre de la comparación/i), {
+      target: { value: 'Mi comparación' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /guardar comparación/i }));
+
+    await waitFor(() => {
+      expect(save).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('muestra las comparaciones guardadas con opción de cargar y eliminar', async () => {
+    const saved = { id: 's1', label: 'Guardada', savedAt: '2026-01-01T00:00:00Z', rows: [] };
+    setScenarioStoreRepository(fakeRepository({ findAll: vi.fn().mockResolvedValue([saved]) }));
+
+    render(<ScenarioComparator />);
+
+    expect(await screen.findByText('Guardada')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /cargar guardada/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /eliminar guardada/i })).toBeInTheDocument();
+  });
+
+  it('muestra un aviso de "guardado solo en este dispositivo" cuando falla la sincronización remota', async () => {
+    const repository = fakeRepository({
+      save: vi.fn().mockResolvedValue(undefined),
+    });
+    setScenarioStoreRepository(repository);
+    render(<ScenarioComparator />);
+    fireEvent.click(screen.getByRole('button', { name: /agregar escenario/i }));
+
+    useScenarioStore.setState({ syncStatus: 'offline' });
+
+    expect(await screen.findByText(/guardados solo en este dispositivo/i)).toBeInTheDocument();
   });
 });

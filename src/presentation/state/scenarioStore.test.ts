@@ -1,12 +1,23 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { useScenarioStore, setScenarioStoreLogger } from './scenarioStore';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { useScenarioStore, setScenarioStoreLogger, setScenarioStoreRepository } from './scenarioStore';
 import type { Logger, LogEntry } from '../../application/ports/logger';
+import type { ScenarioRepository } from '../../application/ports/scenarioRepository';
 
 class FakeLogger implements Logger {
   readonly entries: Omit<LogEntry, 'timestamp'>[] = [];
   log(entry: Omit<LogEntry, 'timestamp'>): void {
     this.entries.push(entry);
   }
+}
+
+function fakeRepository(overrides: Partial<ScenarioRepository> = {}): ScenarioRepository {
+  return {
+    save: vi.fn().mockResolvedValue(undefined),
+    findById: vi.fn().mockResolvedValue(null),
+    findAll: vi.fn().mockResolvedValue([]),
+    remove: vi.fn().mockResolvedValue(undefined),
+    ...overrides,
+  };
 }
 
 function fillRow(
@@ -119,5 +130,87 @@ describe('useScenarioStore', () => {
     expect(useScenarioStore.getState().rows).toHaveLength(0);
     expect(useScenarioStore.getState().comparison).toBeNull();
     expect(useScenarioStore.getState().error).toBeNull();
+  });
+});
+
+describe('useScenarioStore — persistencia de comparaciones guardadas', () => {
+  beforeEach(() => {
+    useScenarioStore.getState().reset();
+    setScenarioStoreRepository(fakeRepository());
+  });
+
+  it('saveCurrentComparison guarda un snapshot de las filas actuales vía el repositorio', async () => {
+    const save = vi.fn<(id: string, scenario: unknown) => Promise<void>>().mockResolvedValue(undefined);
+    setScenarioStoreRepository(fakeRepository({ save }));
+    useScenarioStore.getState().addRow();
+
+    await useScenarioStore.getState().saveCurrentComparison('Mi comparación');
+
+    expect(save).toHaveBeenCalledTimes(1);
+    const [, snapshot] = save.mock.calls[0] as [string, { label: string; rows: unknown[] }];
+    expect(snapshot.label).toBe('Mi comparación');
+    expect(snapshot.rows).toHaveLength(1);
+  });
+
+  it('saveCurrentComparison refresca savedComparisons tras guardar', async () => {
+    const saved = { id: 's1', label: 'Mi comparación', savedAt: '2026-01-01T00:00:00Z', rows: [] };
+    const repository = fakeRepository({ findAll: vi.fn().mockResolvedValue([saved]) });
+    setScenarioStoreRepository(repository);
+
+    await useScenarioStore.getState().saveCurrentComparison('Mi comparación');
+
+    expect(useScenarioStore.getState().savedComparisons).toEqual([saved]);
+  });
+
+  it('loadSavedComparisons puebla savedComparisons desde el repositorio', async () => {
+    const saved = { id: 's1', label: 'Guardada', savedAt: '2026-01-01T00:00:00Z', rows: [] };
+    setScenarioStoreRepository(fakeRepository({ findAll: vi.fn().mockResolvedValue([saved]) }));
+
+    await useScenarioStore.getState().loadSavedComparisons();
+
+    expect(useScenarioStore.getState().savedComparisons).toEqual([saved]);
+  });
+
+  it('loadSavedComparison reemplaza las filas actuales con las de la comparación guardada', async () => {
+    const savedRow = {
+      id: 'row-1',
+      label: 'Escenario A',
+      principal: '5000',
+      annualRatePercent: '10',
+      termValue: '24',
+      termUnit: 'months' as const,
+      system: 'french' as const,
+      rateConversionMethod: 'nominal' as const,
+      startDate: '2026-01-01',
+    };
+    const saved = { id: 's1', label: 'Guardada', savedAt: '2026-01-01T00:00:00Z', rows: [savedRow] };
+    setScenarioStoreRepository(fakeRepository({ findAll: vi.fn().mockResolvedValue([saved]) }));
+    await useScenarioStore.getState().loadSavedComparisons();
+
+    useScenarioStore.getState().loadSavedComparison('s1');
+
+    expect(useScenarioStore.getState().rows).toEqual([savedRow]);
+  });
+
+  it('deleteSavedComparison elimina vía el repositorio y refresca la lista', async () => {
+    const remove = vi.fn().mockResolvedValue(undefined);
+    setScenarioStoreRepository(
+      fakeRepository({ remove, findAll: vi.fn().mockResolvedValue([]) }),
+    );
+
+    await useScenarioStore.getState().deleteSavedComparison('s1');
+
+    expect(remove).toHaveBeenCalledWith('s1');
+    expect(useScenarioStore.getState().savedComparisons).toEqual([]);
+  });
+
+  it('saveCurrentComparison nunca lanza aunque el repositorio falle, y expone un error legible', async () => {
+    setScenarioStoreRepository(
+      fakeRepository({ save: vi.fn().mockRejectedValue(new Error('cuota excedida')) }),
+    );
+    useScenarioStore.getState().addRow();
+
+    await expect(useScenarioStore.getState().saveCurrentComparison('X')).resolves.toBeUndefined();
+    expect(useScenarioStore.getState().persistenceError).not.toBeNull();
   });
 });

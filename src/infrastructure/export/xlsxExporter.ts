@@ -1,4 +1,3 @@
-import ExcelJS from 'exceljs';
 import { format } from 'date-fns';
 import type { Exporter } from '../../application/ports/exporter';
 import type { AmortizationRow } from '../../domain/loans/amortizationRow';
@@ -17,6 +16,9 @@ export class XlsxExporter implements Exporter<
   readonly (AmortizationRow | AdvancedAmortizationRow)[]
 > {
   async export(data: readonly (AmortizationRow | AdvancedAmortizationRow)[]): Promise<Uint8Array> {
+    // Carga diferida: exceljs pesa ~1 MB y solo hace falta al exportar, así que
+    // se mantiene fuera del chunk inicial de la app.
+    const { default: ExcelJS } = await import('exceljs');
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Amortizacion');
 
